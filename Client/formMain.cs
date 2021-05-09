@@ -82,7 +82,7 @@ namespace Client
                 ctThread = new Thread(getMessage);
                 ctThread.Start();
             }
-            catch (Exception er)
+            catch (Exception)
             {
                 MessageBox.Show("Server Not Started");
             }
@@ -182,7 +182,7 @@ namespace Client
                     ctThread.Abort();
                     clientSocket.Close();
                 }
-                catch (Exception ee) { }
+                catch (Exception) { }
 
                 Application.ExitThread();
             }

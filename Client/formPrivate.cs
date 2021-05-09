@@ -148,7 +148,7 @@ namespace Client
                     parts.Clear();
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 ctThread.Abort();
                 clientSocket.Close();

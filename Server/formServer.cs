@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -19,34 +20,34 @@ namespace Server
 {
     public partial class Server : Form
     {
-        TcpListener listener = new TcpListener(IPAddress.Parse("127.0.0.1"), 5000);
+        TcpListener listener;
         TcpClient client;
         String clNo;
         Dictionary<string, TcpClient> clientList = new Dictionary<string, TcpClient>();
-        CancellationTokenSource cancellation = new CancellationTokenSource();
+        CancellationTokenSource cancellation;
         List<string> chat = new List<string>();
 
         public Server()
         {
+            CheckForIllegalCrossThreadCalls = false;
             InitializeComponent();
         }
 
-        private void btnStart_Click(object sender, EventArgs e)
+        private async void btnStart_Click(object sender, EventArgs e)
         {
             cancellation = new CancellationTokenSource(); //resets the token when the server restarts
-            startServer();
+            await startServer();
+            Debug.WriteLine("cross start server");
         }
 
         public void updateUI(String m)
         {
-            this.Invoke((MethodInvoker)delegate // To Write the Received data
-            {
-                textBox1.AppendText(">>" + m + Environment.NewLine);
-            });
+            textBox1.AppendText(">>" + m + Environment.NewLine);
         }
 
-        public async void startServer()
+        public async Task startServer()
         {
+            listener = new TcpListener(IPAddress.Parse("127.0.0.1"), 5000);
             listener.Start();
             updateUI("Server Started at " + listener.LocalEndpoint);
             updateUI("Waiting for Clients");
@@ -56,8 +57,8 @@ namespace Server
                 while (true)
                 {
                     counter++;
-                    //client = await listener.AcceptTcpClientAsync();
-                    client = await Task.Run(() => listener.AcceptTcpClientAsync(), cancellation.Token);
+                    client = await listener.AcceptTcpClientAsync(); // accept incoming request ... 
+
 
                     /* get username */
                     byte[] name = new byte[50];
@@ -70,14 +71,16 @@ namespace Server
                     clientList.Add(username, client);
                     listBox1.Items.Add(username);
                     updateUI("Connected to user " + username + " - " + client.Client.RemoteEndPoint);
-                    announce(username + " Joined ", username, false);
+                    announce(username + " Joined ", username, false); // sent msg againt client for join notify
 
-                    await Task.Delay(1000).ContinueWith(t => sendUsersList());
+                    await Task.Delay(1000).ContinueWith(t => sendUsersList()); // sent list of Client Online to each 
 
 
-                    var c = new Thread(() => ServerReceive(client, username));
-                    c.Start();
-
+                    Task receiveTask = new Task(() =>
+                    {
+                        ServerReceive(client, username);
+                    });
+                    receiveTask.Start();
                 }
             }
             catch (Exception)
@@ -86,12 +89,18 @@ namespace Server
             }
 
         }
-
+        /// <summary>
+        /// When server received msg
+        /// Then annouce to each Client on connecting with server if they are in Global msg
+        /// </summary>
+        /// <param name="msg"></param>
+        /// <param name="uName"></param>
+        /// <param name="flag"></param>
         public void announce(string msg, string uName, bool flag)
         {
             try
             {
-                foreach (var Item in clientList)
+                foreach (var Item in clientList) // loop each client
                 {
                     TcpClient broadcastSocket;
                     broadcastSocket = (TcpClient)Item.Value;
@@ -116,12 +125,12 @@ namespace Server
 
                     }
 
-                    broadcastStream.Write(broadcastBytes, 0, broadcastBytes.Length);
+                    broadcastStream.Write(broadcastBytes, 0, broadcastBytes.Length); // sen to client msg
                     broadcastStream.Flush();
                     chat.Clear();
                 }
             }
-            catch (Exception er)
+            catch (Exception)
             {
 
             }
@@ -151,10 +160,16 @@ namespace Server
         }
 
 
-
+        /// <summary>
+        /// This chat system design that client will be sent a msg as List<string> with list[0] as Key and list[1] as Content
+        /// Key is signature of Global chat or Private chat
+        /// Content is what client want to sent
+        /// </summary>
+        /// <param name="clientn"></param>
+        /// <param name="username"></param>
         public void ServerReceive(TcpClient clientn, String username)
         {
-            byte[] data = new byte[1000];
+            byte[] data = new byte[1024]; // buffer
             String text = null;
             while (true)
             {
@@ -163,6 +178,7 @@ namespace Server
                     NetworkStream stream = clientn.GetStream(); //Gets The Stream of The Connection
                     stream.Read(data, 0, data.Length); //Receives Data 
                     List<string> parts = (List<string>)ByteArrayToObject(data);
+
 
                     switch (parts[0])
                     {
@@ -180,6 +196,8 @@ namespace Server
                     }
 
                     parts.Clear();
+
+
                 }
                 catch (Exception r)
                 {
@@ -203,7 +221,7 @@ namespace Server
             {
                 listener.Stop();
                 updateUI("Server Stopped");
-                foreach (var Item in clientList)
+                foreach (var Item in clientList) // loop each client
                 {
                     TcpClient broadcastSocket;
                     broadcastSocket = (TcpClient)Item.Value;
@@ -258,13 +276,19 @@ namespace Server
             {
             }
         }
-
+        /// <summary>
+        /// 
+        /// Get array of ListBox  of all Client Online
+        /// sent to each Client
+        /// 
+        /// 
+        /// </summary>
         public void sendUsersList()
         {
             try
             {
                 byte[] userList = new byte[1024];
-                string[] clist = listBox1.Items.OfType<string>().ToArray();
+                string[] clist = listBox1.Items.OfType<string>().ToArray(); // get array of listbox CLient Online
                 List<string> users = new List<string>();
 
                 users.Add("userList");
@@ -272,9 +296,9 @@ namespace Server
                 {
                     users.Add(name);
                 }
-                userList = ObjectToByteArray(users);
+                userList = ObjectToByteArray(users); // userList now is byte[] of list Client online 
 
-                foreach (var Item in clientList)
+                foreach (var Item in clientList) // and sent it to each Client
                 {
                     TcpClient broadcastSocket;
                     broadcastSocket = (TcpClient)Item.Value;
@@ -313,6 +337,11 @@ namespace Server
         {
             textBox1.SelectionStart = textBox1.TextLength;
             textBox1.ScrollToCaret();
+        }
+
+        private void Server_Load(object sender, EventArgs e)
+        {
+
         }
     }
 }
